@@ -1,6 +1,9 @@
 defmodule Rihanna.JobsTableIndexing do
   @moduledoc """
-  Benchmark to compare the affect of an index applied to the Rihanna jobs table.
+  Benchmark to compare the affect of indexes applied to the Rihanna jobs table.
+
+  Note that indexes introduce a performance overhead on table write - for truly
+  high-scale performance it may be necessary to further tune the job fetching SQL.
 
   To run this benchmark:
 
@@ -10,10 +13,26 @@ defmodule Rihanna.JobsTableIndexing do
   def benchmark do
     Benchee.run(
       %{
-        "with index" => {
+        "with poll index" => {
           &lock_job/1,
           before_scenario: fn %{pg: pg} = input ->
-            create_index(pg)
+            create_poll_index(pg)
+            input
+          end
+        },
+        "with comparison/sort index" => {
+          &lock_job/1,
+          before_scenario: fn %{pg: pg} = input ->
+            create_comparison_and_sort_index(pg)
+            input
+          end
+        },
+        # not advisable to create two indexes, introducing two performance hits
+        "with poll and comparison/sort indexes" => {
+          &lock_job/1,
+          before_scenario: fn %{pg: pg} = input ->
+            create_poll_index(pg)
+            create_comparison_and_sort_index(pg)
             input
           end
         },
@@ -28,7 +47,8 @@ defmodule Rihanna.JobsTableIndexing do
         "10 x ready, scheduled, due, and failed jobs" => 10,
         "100 x ready, scheduled, due, and failed jobs" => 100,
         "1,000 x ready, scheduled, due, and failed jobs" => 1_000,
-        "10,000 x ready, scheduled, due, and failed jobs" => 10_000
+        "10,000 x ready, scheduled, due, and failed jobs" => 10_000,
+        "100,000 x ready, scheduled, due, and failed jobs" => 100_000
       },
       time: 5,
 
@@ -73,12 +93,22 @@ defmodule Rihanna.JobsTableIndexing do
     end
   end
 
-  defp create_index(pg) do
+  defp create_poll_index(pg) do
     Postgrex.query!(
       pg,
       """
       CREATE INDEX rihanna_poll_idx ON rihanna_jobs (due_at)
       WHERE (failed_at IS NULL);
+      """,
+      []
+    )
+  end
+
+  defp create_comparison_and_sort_index(pg) do
+    Postgrex.query!(
+      pg,
+      """
+      CREATE INDEX rihanna_comparison_and_sort_idx ON rihanna_jobs (enqueued_at ASC, id ASC);
       """,
       []
     )
